@@ -18,8 +18,12 @@ const httpServer = http.createServer((req, res) => {
 });
 
 const io = new Server(httpServer, {
-  cors: { origin: '*', methods: ['GET', 'POST'] },
-  transports: ['polling', 'websocket'],
+  cors: {
+    origin: ['https://magnusinfrance.fr', 'http://localhost:3000', 'http://localhost:8000', 'null'],
+    methods: ['GET', 'POST'],
+    credentials: false
+  },
+  transports: ['websocket', 'polling'],
   allowUpgrades: true,
   pingInterval: 5000,
   pingTimeout: 10000
