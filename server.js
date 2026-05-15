@@ -13,7 +13,8 @@ const PORT = process.env.PORT || 3000;
 
 const httpServer = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('COMBATris Online Signaling Server — OK\n');
+  res.end('COMBATris Online Signaling Server — OK
+');
 });
 
 const io = new Server(httpServer, {
