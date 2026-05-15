@@ -1,7 +1,7 @@
 {
   "name": "combatris-online-server",
   "version": "1.0.0",
-  "description": "COMBATris Online — Signaling & Lobby Server",
+  "description": "COMBATris Online \u2014 Signaling & Game Relay Server",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

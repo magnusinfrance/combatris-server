@@ -1,12 +1,9 @@
 /**
- * COMBATris Online — Signaling + Lobby Server
- * Node.js + Socket.io
- *
+ * COMBATris Online — Signaling + Game Relay Server
+ * All game messages go through Socket.io (no WebRTC needed)
  * Deploy free on Railway / Render / Fly.io
- *
  * Install:  npm install
  * Run:      node server.js
- * Env vars: PORT (default 3000)
  */
 
 const http = require('http');
@@ -20,11 +17,14 @@ const httpServer = http.createServer((req, res) => {
 });
 
 const io = new Server(httpServer, {
-  cors: { origin: '*', methods: ['GET', 'POST'] }
+  cors: { origin: '*', methods: ['GET', 'POST'] },
+  transports: ['polling', 'websocket'],
+  allowUpgrades: true,
+  pingInterval: 5000,
+  pingTimeout: 10000
 });
 
-// rooms: Map<roomCode, { host: socketId, guest: socketId|null, started: bool }>
-const rooms = new Map();
+const rooms = new Map(); // code -> { host, guest }
 
 function makeCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -33,65 +33,64 @@ function makeCode() {
   return code;
 }
 
-function cleanupSocket(socketId) {
+function findRoomBySocket(socketId) {
   for (const [code, room] of rooms.entries()) {
-    if (room.host === socketId || room.guest === socketId) {
-      // Notify the other peer
-      const other = room.host === socketId ? room.guest : room.host;
-      if (other) io.to(other).emit('peer-left');
-      rooms.delete(code);
-      break;
-    }
+    if (room.host === socketId || room.guest === socketId) return { code, room };
   }
+  return null;
+}
+
+function cleanupSocket(socketId) {
+  const found = findRoomBySocket(socketId);
+  if (!found) return;
+  const { code, room } = found;
+  const other = room.host === socketId ? room.guest : room.host;
+  if (other) io.to(other).emit('peer-left');
+  rooms.delete(code);
+  console.log(`[room] ${code} closed`);
 }
 
 io.on('connection', socket => {
-  console.log(`[+] ${socket.id} connected`);
+  console.log(`[+] ${socket.id} connected (transport: ${socket.conn.transport.name})`);
 
-  // ── CREATE ROOM ──────────────────────────────────────────
   socket.on('create-room', () => {
-    // Remove any existing room for this socket
     cleanupSocket(socket.id);
     let code;
     do { code = makeCode(); } while (rooms.has(code));
-    rooms.set(code, { host: socket.id, guest: null, started: false });
+    rooms.set(code, { host: socket.id, guest: null });
     socket.join(code);
     socket.emit('room-created', { code });
     console.log(`[room] ${code} created by ${socket.id}`);
   });
 
-  // ── JOIN ROOM ────────────────────────────────────────────
   socket.on('join-room', ({ code }) => {
     const room = rooms.get(code?.toUpperCase());
-    if (!room) { socket.emit('join-error', 'Room not found'); return; }
-    if (room.guest) { socket.emit('join-error', 'Room is full'); return; }
-    if (room.started) { socket.emit('join-error', 'Game already started'); return; }
+    if (!room)                { socket.emit('join-error', 'Room not found'); return; }
+    if (room.guest)           { socket.emit('join-error', 'Room is full'); return; }
     if (room.host === socket.id) { socket.emit('join-error', 'Cannot join your own room'); return; }
 
     room.guest = socket.id;
     socket.join(code);
-    room.started = true;
 
-    // Tell host they are the "offerer" (P1/host) and give them the guest's socket id
-    io.to(room.host).emit('peer-joined', { peerId: socket.id, isHost: true });
-    // Tell guest they are the "answerer" (P2/guest)
-    socket.emit('peer-joined', { peerId: room.host, isHost: false });
-    console.log(`[room] ${code}: ${socket.id} joined — starting`);
+    io.to(room.host).emit('peer-joined', { peerId: socket.id,  isHost: true  });
+    socket.emit(          'peer-joined', { peerId: room.host,  isHost: false });
+    console.log(`[room] ${code}: guest ${socket.id} joined — game starting`);
   });
 
-  // ── WebRTC SIGNALING RELAY ───────────────────────────────
-  // Relay offer / answer / ICE candidates between peers
-  socket.on('signal', ({ to, data }) => {
-    io.to(to).emit('signal', { from: socket.id, data });
+  socket.on('game-msg', (msg) => {
+    const found = findRoomBySocket(socket.id);
+    if (!found) return;
+    const { room } = found;
+    const other = room.host === socket.id ? room.guest : room.host;
+    if (other) io.to(other).emit('game-msg', msg);
   });
 
-  // ── DISCONNECT ───────────────────────────────────────────
   socket.on('disconnect', () => {
     console.log(`[-] ${socket.id} disconnected`);
     cleanupSocket(socket.id);
   });
 });
 
-httpServer.listen(PORT, () => {
-  console.log(`COMBATris signaling server listening on :${PORT}`);
+httpServer.listen(PORT, '0.0.0.0', () => {
+  console.log(`COMBATris relay server listening on 0.0.0.0:${PORT}`);
 });
